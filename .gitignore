@@ -19,6 +19,9 @@ lerna-debug.log*
 .env.test
 .env.production
 
+# GitHub workflows
+.github/workflows
+
 # temp directory
 .temp
 .tmp
