@@ -1,0 +1,518 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  INSTITUTION_ADMIN
+  INSTITUTION_STAFF
+  CITIZEN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id            String      @id @default(cuid())
+  username      String      @unique
+  email         String      @unique
+  password      String
+  role          UserRole    @default(CITIZEN)
+  status        UserStatus  @default(ACTIVE)
+  refreshToken  String?
+  name          String?
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  incidentsReported Incident[]    @relation("ReportedIncidents")
+  incidentsAssigned Incident[]    @relation("AssignedIncidents")
+  messages          Message[]
+  notifications     Notification[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  permissions Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("roles")
+}
+
+enum InstitutionStatus {
+  ACTIVE
+  PENDING
+  REJECTED
+  SUSPENDED
+}
+
+enum TrustLevel {
+  NONE
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+model Institution {
+  id              String             @id @default(cuid())
+  name            String
+  type            String
+  status          InstitutionStatus  @default(PENDING)
+  trustLevel      TrustLevel         @default(NONE)
+  membersCount    Int                @default(0)
+  verifiedReports Int                @default(0)
+  joinDate        DateTime           @default(now())
+  contactEmail    String?
+  contactPhone    String?
+  address         String?
+  province        String?
+  city            String?
+  district        String?
+  regionId        String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  users            User[]
+  incidents        Incident[]
+  hotlines         Hotline[]
+  coverageAreas    CoverageArea[]
+  socialPosts      SocialPost[]
+  emergencyContacts EmergencyContact[]
+
+  @@map("institutions")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+  HOAX
+}
+
+enum IncidentSource {
+  ADMIN
+  SOCIAL
+  HOTLINE
+  CITIZEN
+}
+
+model Incident {
+  id            String           @id @default(cuid())
+  type          String
+  location      String
+  reporter      String
+  description   String?
+  media         Json?
+  status        IncidentStatus   @default(PENDING)
+  source        IncidentSource   @default(CITIZEN)
+  severity      IncidentSeverity @default(MEDIUM)
+  title         String?
+  reportedById  String?
+  reportedBy    User?            @relation("ReportedIncidents", fields: [reportedById], references: [id])
+  institutionId String?
+  institution   Institution?     @relation(fields: [institutionId], references: [id])
+  assignedToId  String?
+  assignedTo    User?            @relation("AssignedIncidents", fields: [assignedToId], references: [id])
+  citizenPostId String?          @unique
+  citizenPost   CitizenPost?     @relation(fields: [citizenPostId], references: [id])
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  createdBy     String?
+
+  @@map("incidents")
+}
+
+enum HotlineType {
+  POLICE
+  HOSPITAL
+  FIRE
+  SAR
+  PLN
+  BNPB
+  BPBD
+  EMERGENCY
+  FLOOD
+  MEDICAL
+  INFORMATION
+  OTHER
+}
+
+model Hotline {
+  id            String      @id @default(cuid())
+  name          String
+  number        String
+  coverage      Json?
+  serviceType   String?
+  operatingHours String?
+  status        String      @default("active")
+  type          HotlineType? @default(OTHER)
+  phone         String?
+  location      String?
+  address       String?
+  lat           Float?
+  lng           Float?
+  city          String?
+  source        String?
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("hotlines")
+}
+
+model CoverageArea {
+  id            String      @id @default(cuid())
+  name          String
+  coverage      Json?
+  status        String      @default("active")
+  latitude      Float?
+  longitude     Float?
+  type          String?
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  createdBy     String?
+
+  @@map("coverage_areas")
+}
+
+enum SocialPostType {
+  WARNING
+  UPDATE
+  BROADCAST
+  INFO
+  NEWS
+  TIPS
+  ALERT
+  THANK_YOU
+}
+
+model SocialPost {
+  id              String         @id @default(cuid())
+  author          String
+  institutionName String         // Nama institusi
+  caption         String
+  media           Json?
+  type            SocialPostType @default(UPDATE)
+  likes           Json           @default("[]")
+  createdBy       String
+  institutionId   String
+  institution     Institution    @relation(fields: [institutionId], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  comments        SocialComment[]
+
+  @@map("social_posts")
+}
+
+model SocialComment {
+  id        String       @id @default(cuid())
+  postId    String
+  post      SocialPost   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author    String
+  content   String
+  createdBy String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  replies   SocialReply[]
+
+  @@map("social_comments")
+}
+
+model SocialReply {
+  id        String       @id @default(cuid())
+  commentId String
+  comment   SocialComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  author    String
+  content   String
+  createdBy String
+  createdAt DateTime     @default(now())
+
+  @@map("social_replies")
+}
+
+model EmergencyContact {
+  id            String      @id @default(cuid())
+  name          String
+  type          String
+  phone         String
+  address       String?
+  city          String?
+  lat           Float?
+  lng           Float?
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("emergency_contacts")
+}
+
+model CitizenProfile {
+  id          String   @id @default(cuid())
+  name        String
+  username    String   @unique
+  email       String   @unique
+  phone       String?
+  avatar      String?
+  bio         String?
+  province    String?
+  city        String?
+  district    String?
+  postsCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts       CitizenPost[]
+  comments    CitizenComment[]
+  replies     CitizenReply[]
+  sosLogs     SosLog[]
+
+  @@map("citizen_profiles")
+}
+
+enum PostStatus {
+  PUBLISHED
+  VERIFIED
+  RESOLVED
+  HOAX
+}
+
+model CitizenPost {
+  id                  String     @id @default(cuid())
+  caption             String
+  media               Json?
+  category            String
+  location            Json?
+  urgency             String     @default("normal")
+  upvotes             Json       @default("[]")
+  urgentVotes         Json       @default("[]")
+  status              PostStatus @default(PUBLISHED)
+  assignedInstitution String?
+  institutionResponse String?
+  createdById         String
+  createdBy           CitizenProfile @relation(fields: [createdById], references: [id])
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  comments            CitizenComment[]
+  incident            Incident?
+  hoaxReports         HoaxReport[]
+
+  @@map("citizen_posts")
+}
+
+model CitizenComment {
+  id          String         @id @default(cuid())
+  content     String
+  postId      String
+  post        CitizenPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   CitizenProfile @relation(fields: [createdById], references: [id])
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  replies     CitizenReply[]
+
+  @@map("citizen_comments")
+}
+
+model CitizenReply {
+  id          String         @id @default(cuid())
+  content     String
+  commentId   String
+  comment     CitizenComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   CitizenProfile @relation(fields: [createdById], references: [id])
+  createdAt   DateTime       @default(now())
+
+  @@map("citizen_replies")
+}
+
+model HoaxReport {
+  id          String   @id @default(cuid())
+  postId      String
+  post        CitizenPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reason      String
+  reportedBy  String
+  createdAt   DateTime @default(now())
+
+  @@map("hoax_reports")
+}
+
+model SosLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  userName  String?
+  location  Json?
+  contacted String?
+  profileId String?
+  profile   CitizenProfile? @relation(fields: [profileId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("sos_logs")
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  FLAGGED
+  REMOVED
+}
+
+model ContentItem {
+  id            String           @id @default(cuid())
+  title         String
+  type          String
+  author        String
+  institution   String
+  reportsCount  Int              @default(0)
+  aiScore       Json?
+  status        ModerationStatus @default(PENDING)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  spamReports   SpamReport[]
+
+  @@map("content_items")
+}
+
+model SpamReport {
+  id            String   @id @default(cuid())
+  contentTitle  String
+  contentType   String
+  reporter      String
+  reason        String
+  isBulk        Boolean  @default(false)
+  relatedCount  Int      @default(0)
+  status        String   @default("pending")
+  contentItemId String?
+  contentItem   ContentItem? @relation(fields: [contentItemId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@map("spam_reports")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  parentId    String?
+  parent      Category?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryParent")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@map("categories")
+}
+
+model DataRecord {
+  id        String   @id @default(cuid())
+  title     String
+  type      String
+  content   Json?
+  status    String   @default("active")
+  userId    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("data_records")
+}
+
+model Province {
+  id   String @id
+  name String
+
+  cities City[]
+
+  @@map("provinces")
+}
+
+model City {
+  id         String @id
+  name       String
+  provinceId String
+  province   Province @relation(fields: [provinceId], references: [id])
+
+  districts District[]
+
+  @@map("cities")
+}
+
+model District {
+  id     String @id
+  name   String
+  cityId String
+  city   City @relation(fields: [cityId], references: [id])
+
+  @@map("districts")
+}
+
+model Discussion {
+  id          String    @id @default(cuid())
+  title       String?
+  participants Json
+  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime  @default(now())
+
+  messages    Message[]
+
+  @@map("discussions")
+}
+
+model Message {
+  id           String     @id @default(cuid())
+  content      String
+  type         String     @default("text")
+  media        Json?
+  discussionId String
+  discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  senderId     String
+  sender       User       @relation(fields: [senderId], references: [id])
+  createdAt    DateTime   @default(now())
+
+  @@map("messages")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  link      String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
