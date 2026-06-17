@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
-import { CreateInstitutionDto, UpdateInstitutionDto, UpdateInstitutionStatusDto, UpdateTrustLevelDto, AddMemberDto, UpdateMemberRoleDto } from './institutions.dto';
+import { CreateInstitutionDto, UpdateInstitutionDto, UpdateInstitutionStatusDto, UpdateTrustLevelDto, AddMemberDto, UpdateMemberRoleDto, ResetPasswordDto } from './institutions.dto';
 
 @Injectable()
 export class InstitutionsService {
@@ -22,12 +24,14 @@ export class InstitutionsService {
     }
 
     const [data, total] = await Promise.all([
-      this.prisma.institution.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+      this.prisma.institution.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' }, include: { emergencyContacts: true } }),
       this.prisma.institution.count({ where }),
     ]);
 
+    const enriched = await this.enrichWithRegionNames(data);
+
     return {
-      data,
+      data: enriched,
       meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -45,10 +49,11 @@ export class InstitutionsService {
   async findOne(id: string) {
     const institution = await this.prisma.institution.findUnique({
       where: { id },
-      include: { users: { select: { id: true, username: true, email: true, name: true, role: true } } },
+      include: { users: { select: { id: true, username: true, email: true, name: true, role: true } }, emergencyContacts: true },
     });
     if (!institution) throw new NotFoundException('Institution not found');
-    return institution;
+    const enriched = await this.enrichWithRegionNames([institution]);
+    return enriched[0];
   }
 
   async getDashboard(id: string) {
@@ -85,12 +90,90 @@ export class InstitutionsService {
   }
 
   async create(dto: CreateInstitutionDto) {
-    return this.prisma.institution.create({ data: dto });
+    const existing = await this.prisma.user.findFirst({
+      where: { email: dto.contactEmail },
+    });
+    if (existing) throw new ConflictException('Email already exists');
+
+    const defaultPassword = crypto.randomBytes(4).toString('hex');
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+    const now = new Date();
+
+    const institution = await this.prisma.institution.create({
+      data: {
+        name: dto.name,
+        type: dto.type,
+        contactEmail: dto.contactEmail,
+        contactPhone: dto.contactPhone,
+        address: dto.address,
+        status: (dto.status || 'ACTIVE') as any,
+        province: dto.province || dto.selectedProvince,
+        city: dto.city || dto.selectedCity,
+        district: dto.district || dto.selectedDistrict,
+        regionId: dto.regionId,
+        joinDate: now,
+      },
+    });
+
+    if (dto.emergencyContacts?.length) {
+      await this.prisma.emergencyContact.createMany({
+        data: dto.emergencyContacts.map(c => ({
+          name: c.name,
+          type: c.type || 'OTHER',
+          phone: c.phone,
+          address: c.address,
+          city: c.city,
+          institutionId: institution.id,
+        })),
+      });
+    }
+
+    const username = dto.name.toLowerCase().replace(/\s+/g, '_') + '_admin';
+
+    await this.prisma.user.create({
+      data: {
+        username,
+        email: dto.contactEmail || `${username}@emergy.my.id`,
+        password: hashedPassword,
+        name: dto.name,
+        role: 'INSTITUTION_ADMIN',
+        institutionId: institution.id,
+      },
+    });
+
+    return {
+      ...institution,
+      defaultPassword,
+      message: 'Institution created successfully. Share the default password with the institution admin.',
+    };
   }
 
   async update(id: string, dto: UpdateInstitutionDto) {
     await this.findOne(id);
-    return this.prisma.institution.update({ where: { id }, data: dto });
+
+    const { selectedProvince, selectedCity, selectedDistrict, emergencyContacts, ...rest } = dto;
+    const data: any = { ...rest };
+    if (selectedProvince) data.province = selectedProvince;
+    if (selectedCity) data.city = selectedCity;
+    if (selectedDistrict) data.district = selectedDistrict;
+
+    if (emergencyContacts !== undefined) {
+      await this.prisma.emergencyContact.deleteMany({ where: { institutionId: id } });
+      if (emergencyContacts.length) {
+        await this.prisma.emergencyContact.createMany({
+          data: emergencyContacts.map(c => ({
+            name: c.name,
+            type: c.type || 'OTHER',
+            phone: c.phone,
+            address: c.address,
+            city: c.city,
+            institutionId: id,
+          })),
+        });
+      }
+    }
+
+    return this.prisma.institution.update({ where: { id }, data });
   }
 
   async updateStatus(id: string, dto: UpdateInstitutionStatusDto) {
@@ -123,6 +206,45 @@ export class InstitutionsService {
       where: { id: userId },
       data: { role: dto.role as any },
     });
+  }
+
+  async resetPassword(id: string, dto: ResetPasswordDto) {
+    const institution = await this.findOne(id);
+    const adminUser = await this.prisma.user.findFirst({
+      where: { institutionId: id, role: 'INSTITUTION_ADMIN' },
+    });
+    if (!adminUser) throw new NotFoundException('No admin user found for this institution');
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: adminUser.id },
+      data: { password: hashedPassword },
+    });
+
+    return { message: 'Password reset successfully' };
+  }
+
+  private async enrichWithRegionNames(items: any[]) {
+    const provinceIds = [...new Set(items.map(i => i.province).filter(Boolean))];
+    const cityIds = [...new Set(items.map(i => i.city).filter(Boolean))];
+    const districtIds = [...new Set(items.map(i => i.district || i.regionId).filter(Boolean))];
+
+    const [provinces, cities, districts] = await Promise.all([
+      provinceIds.length ? this.prisma.province.findMany({ where: { id: { in: provinceIds } } }) : [],
+      cityIds.length ? this.prisma.city.findMany({ where: { id: { in: cityIds } } }) : [],
+      districtIds.length ? this.prisma.district.findMany({ where: { id: { in: districtIds } } }) : [],
+    ]);
+
+    const provMap = Object.fromEntries(provinces.map(p => [p.id, p.name]));
+    const cityMap = Object.fromEntries(cities.map(c => [c.id, c.name]));
+    const distMap = Object.fromEntries(districts.map(d => [d.id, d.name]));
+
+    return items.map(item => ({
+      ...item,
+      provinceName: provMap[item.province] || null,
+      cityName: cityMap[item.city] || null,
+      districtName: distMap[item.district || item.regionId] || null,
+    }));
   }
 
   async remove(id: string) {

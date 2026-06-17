@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiParam, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiParam, ApiBody, ApiCreatedResponse, ApiOkResponse, ApiResponse } from '@nestjs/swagger';
 import { InstitutionsService } from './institutions.service';
-import { CreateInstitutionDto, UpdateInstitutionDto, UpdateInstitutionStatusDto, UpdateTrustLevelDto, AddMemberDto, UpdateMemberRoleDto } from './institutions.dto';
+import { CreateInstitutionDto, UpdateInstitutionDto, UpdateInstitutionStatusDto, UpdateTrustLevelDto, AddMemberDto, UpdateMemberRoleDto, ResetPasswordDto, CreateInstitutionResponseDto, ResetPasswordResponseDto, ErrorResponseDto } from './institutions.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -76,8 +76,10 @@ export class InstitutionsController {
   @Post()
   @Roles('SUPERADMIN')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create institution (superadmin)' })
+  @ApiOperation({ summary: 'Create institution', description: 'Superadmin creates institution + generates INSTITUTION_ADMIN user with default password.' })
   @ApiBody({ type: CreateInstitutionDto })
+  @ApiCreatedResponse({ type: CreateInstitutionResponseDto, description: 'Institution created with default password' })
+  @ApiResponse({ status: 409, type: ErrorResponseDto, description: 'Email already exists' })
   async create(@Body() dto: CreateInstitutionDto) {
     return this.institutionsService.create(dto);
   }
@@ -133,6 +135,18 @@ export class InstitutionsController {
     @Body() dto: UpdateMemberRoleDto,
   ) {
     return this.institutionsService.updateMemberRole(id, userId, dto);
+  }
+
+  @Post(':id/reset-password')
+  @Roles('SUPERADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reset password admin institusi', description: 'Superadmin resets the INSTITUTION_ADMIN password for a given institution.' })
+  @ApiParam({ name: 'id', type: String, description: 'Institution ID' })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiOkResponse({ type: ResetPasswordResponseDto, description: 'Password reset successfully' })
+  @ApiResponse({ status: 404, type: ErrorResponseDto, description: 'Institution or admin user not found' })
+  async resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
+    return this.institutionsService.resetPassword(id, dto);
   }
 
   @Delete(':id')
